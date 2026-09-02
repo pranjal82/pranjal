@@ -97,6 +97,12 @@ public class TabletClient extends ReplayingDecoder<Void> {
 
   public static final Logger LOG = LoggerFactory.getLogger(TabletClient.class);
 
+  enum CDCErrorHandling {
+    RETRY_NOT_LEADER,
+    RETRY_TABLET_NOT_FOUND,
+    FAIL
+  }
+
   private ArrayList<YRpc<?>> pending_rpcs;
 
   /** The connection header.  */
@@ -535,37 +541,40 @@ public class TabletClient extends ReplayingDecoder<Void> {
 
   private Exception dispatchCDCErrorOrReturnException(YRpc rpc,
                                                      CdcService.CDCErrorPB error) {
-    WireProtocol.AppStatusPB.ErrorCode code = error.getStatus().getCode();
     CDCErrorException ex = new CDCErrorException(uuid, error);
-    if (error.getCode() == CdcService.CDCErrorPB.Code.TABLET_NOT_RUNNING ||
-      error.getCode() == CdcService.CDCErrorPB.Code.LEADER_NOT_READY ||
-      error.getCode() == CdcService.CDCErrorPB.Code.NOT_LEADER ||
-      error.getCode() == CdcService.CDCErrorPB.Code.NOT_RUNNING) {
-      // rpc.deadlineTracker.reset();
-      ybClient.handleNotLeader(rpc, ex, this);
-      // we're not calling rpc.callback() so we rely on the client to retry that RPC
-    } else if (code == WireProtocol.AppStatusPB.ErrorCode.SERVICE_UNAVAILABLE ||
-      code == WireProtocol.AppStatusPB.ErrorCode.IO_ERROR ||
-      code == WireProtocol.AppStatusPB.ErrorCode.LEADER_NOT_READY_TO_SERVE ||
-      code == WireProtocol.AppStatusPB.ErrorCode.TIMED_OUT) {
-      ybClient.handleRetryableError(rpc, ex, this);
-      // The following error codes are an indication that the tablet isn't a leader, or, in case
-      // of LEADER_HAS_NO_LEASE, might no longer be the leader due to failing to replicate a leader
-      // lease, so we retry looking up the leader anyway.
+
+    switch (getCDCErrorHandling(error.getCode())) {
+      case RETRY_NOT_LEADER:
+        ybClient.handleNotLeader(rpc, ex, this);
+        // we're not calling rpc.callback() so we rely on the client to retry that RPC
+        return null;
+      case RETRY_TABLET_NOT_FOUND:
+        ybClient.handleTabletNotFound(rpc, ex, this);
+        return null;
+      case FAIL:
+      default:
+        return ex;
     }
-    else if (error.getCode() == CdcService.CDCErrorPB.Code.TABLET_NOT_FOUND ||
-      code == WireProtocol.AppStatusPB.ErrorCode.NOT_FOUND) {
-      ybClient.handleTabletNotFound(rpc, ex, this);
+  }
+
+  static CDCErrorHandling getCDCErrorHandling(CdcService.CDCErrorPB.Code code) {
+    switch (code) {
+      case TABLET_NOT_RUNNING:
+      case LEADER_NOT_READY:
+      case NOT_LEADER:
+      case NOT_RUNNING:
+        return CDCErrorHandling.RETRY_NOT_LEADER;
+      case TABLET_NOT_FOUND:
+        return CDCErrorHandling.RETRY_TABLET_NOT_FOUND;
+      case INVALID_REQUEST:
+      case TABLE_NOT_FOUND:
+      case CHECKPOINT_TOO_OLD:
+      case TABLET_SPLIT:
+      case OPERATION_DISALLOWED:
+      case AUTO_FLAGS_CONFIG_VERSION_MISMATCH:
+      default:
+        return CDCErrorHandling.FAIL;
     }
-    else if (code == WireProtocol.AppStatusPB.ErrorCode.LEADER_HAS_NO_LEASE ||
-      code == WireProtocol.AppStatusPB.ErrorCode.ILLEGAL_STATE ||
-      code == WireProtocol.AppStatusPB.ErrorCode.ABORTED ||
-      error.getCode() == CdcService.CDCErrorPB.Code.NOT_LEADER) {
-      ybClient.handleNotLeader(rpc, ex, this);
-    } else {
-      return ex;
-    }
-    return null;
   }
 
   /**
