@@ -122,6 +122,7 @@
 #include "yb/master/catalog_entity_parser.h"
 #include "yb/master/catalog_loaders.h"
 #include "yb/master/catalog_manager_bg_tasks.h"
+#include "yb/master/catalog_manager_cdc_bg_tasks.h"
 #include "yb/master/catalog_manager_util.h"
 #include "yb/master/catalog_manager-internal.h"
 #include "yb/master/cdcsdk_manager.h"
@@ -2346,6 +2347,9 @@ void CatalogManager::CompleteShutdown() {
   xcluster_manager_->CompleteShutdown();
   ysql_manager_->CompleteShutdown();
 
+  if (cdc_background_tasks_) {
+    cdc_background_tasks_->Shutdown();
+  }
   if (background_tasks_) {
     background_tasks_->Shutdown();
   }
@@ -11377,6 +11381,10 @@ Status CatalogManager::EnableBgTasks() {
   RETURN_NOT_OK_PREPEND(background_tasks_->Init(),
                         "Failed to initialize catalog manager background tasks");
 
+  cdc_background_tasks_.reset(new CatalogManagerCdcBgTasks(master_));
+  RETURN_NOT_OK_PREPEND(cdc_background_tasks_->Init(),
+                        "Failed to initialize CDC cleanup background tasks");
+
   // Add bg thread to rebuild yql system partitions.
   refresh_yql_partitions_task_ = std::make_unique<rpc::ScheduledTaskTracker>();
   refresh_yql_partitions_task_->Bind(&master_->messenger()->scheduler());
@@ -13292,6 +13300,10 @@ Status CatalogManager::GoIntoShellMode() {
   {
     LockGuard lock(mutex_);
     RETURN_NOT_OK(sys_catalog_->GoIntoShellMode());
+    if (cdc_background_tasks_) {
+      cdc_background_tasks_->Shutdown();
+      cdc_background_tasks_.reset();
+    }
     background_tasks_->Shutdown();
     background_tasks_.reset();
   }

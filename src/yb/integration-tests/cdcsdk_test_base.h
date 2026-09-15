@@ -42,6 +42,7 @@ DECLARE_bool(hide_pg_catalog_table_creation_logs);
 DECLARE_bool(master_auto_run_initdb);
 DECLARE_bool(cdc_populate_safepoint_record);
 DECLARE_uint32(max_replication_slots);
+DECLARE_int32(cdc_cleanup_bg_task_wait_ms);
 DECLARE_bool(ysql_yb_enable_replication_commands);
 DECLARE_uint32(cdcsdk_retention_barrier_no_revision_interval_secs);
 DECLARE_int32(cleanup_split_tablets_interval_sec);

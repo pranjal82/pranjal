@@ -83,6 +83,7 @@ class MasterTestXRepl  : public MasterTestBase {
     // catalog tables.
     ANNOTATE_UNPROTECTED_WRITE(FLAGS_ysql_yb_enable_implicit_dynamic_tables_logical_replication) =
         false;
+    ANNOTATE_UNPROTECTED_WRITE(FLAGS_cdc_cleanup_bg_task_wait_ms) = 100;
   }
 
   Result<xrepl::StreamId> CreateCDCStream(const TableId& table_id);

@@ -3795,8 +3795,8 @@ Status CatalogManager::CleanUpCDCSDKStreamsMetadata(const LeaderEpoch& epoch) {
   return CleanupCDCSDKDroppedTablesFromStreamInfo(epoch, drop_stream_table_list);
 }
 
-Status CatalogManager::CleanUpDeletedXReplStreams(const LeaderEpoch& epoch) {
-  auto streams = VERIFY_RESULT(FindXReplStreamsMarkedForDeletion(SysCDCStreamEntryPB::DELETING));
+Status CatalogManager::CleanUpDeletedXReplStreamsForStreams(
+    const LeaderEpoch& epoch, std::vector<CDCStreamInfoPtr> streams) {
   if (streams.empty()) {
     return Status::OK();
   }
@@ -3814,7 +3814,7 @@ Status CatalogManager::CleanUpDeletedXReplStreams(const LeaderEpoch& epoch) {
   // We use GetTableRangeAsync here since it could be that we came here to rollback a CDCSDK stream
   // with the CDC state table creation still in progress. This can happen in case the stream being
   // rolled back is the first CDC stream in the universe. In this case, we skip the rollback and the
-  // caller (CatalogManagerBgTasks) is expected to retry this cleanup at a later time.
+  // caller is expected to retry this cleanup at a later time.
   Status iteration_status;
   auto all_entry_keys = VERIFY_RESULT(
       cdc_state_table_->GetTableRangeAsync({} /* just key columns */, &iteration_status));
@@ -3875,6 +3875,35 @@ Status CatalogManager::CleanUpDeletedXReplStreams(const LeaderEpoch& epoch) {
   LOG(INFO) << "Successfully deleted XRepl streams: " << CDCStreamInfosAsString(streams_to_delete);
 
   return Status::OK();
+}
+
+Status CatalogManager::CleanUpDeletedCDCSDKStreams(const LeaderEpoch& epoch) {
+  auto streams = VERIFY_RESULT(FindXReplStreamsMarkedForDeletion(SysCDCStreamEntryPB::DELETING));
+  std::vector<CDCStreamInfoPtr> cdcsdk_streams;
+  cdcsdk_streams.reserve(streams.size());
+  for (auto& stream : streams) {
+    if (stream->IsCDCSDKStream()) {
+      cdcsdk_streams.push_back(std::move(stream));
+    }
+  }
+  return CleanUpDeletedXReplStreamsForStreams(epoch, std::move(cdcsdk_streams));
+}
+
+Status CatalogManager::CleanUpDeletedXClusterStreams(const LeaderEpoch& epoch) {
+  auto streams = VERIFY_RESULT(FindXReplStreamsMarkedForDeletion(SysCDCStreamEntryPB::DELETING));
+  std::vector<CDCStreamInfoPtr> xcluster_streams;
+  xcluster_streams.reserve(streams.size());
+  for (auto& stream : streams) {
+    if (!stream->IsCDCSDKStream()) {
+      xcluster_streams.push_back(std::move(stream));
+    }
+  }
+  return CleanUpDeletedXReplStreamsForStreams(epoch, std::move(xcluster_streams));
+}
+
+Status CatalogManager::CleanUpDeletedXReplStreams(const LeaderEpoch& epoch) {
+  auto streams = VERIFY_RESULT(FindXReplStreamsMarkedForDeletion(SysCDCStreamEntryPB::DELETING));
+  return CleanUpDeletedXReplStreamsForStreams(epoch, std::move(streams));
 }
 
 Status CatalogManager::CleanupXReplStreamFromMaps(CDCStreamInfoPtr stream) {
@@ -5980,7 +6009,8 @@ void CatalogManager::RunXReplBgTasks(const LeaderEpoch& epoch) {
   TEST_SYNC_POINT("RunXReplBgTasks::Start");
 
   if (!FLAGS_TEST_cdcsdk_disable_deleted_stream_cleanup) {
-    WARN_NOT_OK(CleanUpDeletedXReplStreams(epoch), "Failed Cleaning Deleted XRepl Streams");
+    WARN_NOT_OK(
+        CleanUpDeletedXClusterStreams(epoch), "Failed cleaning deleted xCluster streams");
   }
 
   // Clean up Failed Universes on the Consumer.
@@ -5988,10 +6018,6 @@ void CatalogManager::RunXReplBgTasks(const LeaderEpoch& epoch) {
 
   // Clean up Failed Replication Bootstrap on the Consumer.
   WARN_NOT_OK(ClearFailedReplicationBootstrap(), "Failed Clearing Failed Replication Bootstrap");
-
-  if (!FLAGS_TEST_cdcsdk_disable_drop_table_cleanup) {
-    WARN_NOT_OK(CleanUpCDCSDKStreamsMetadata(epoch), "Failed Cleanup CDCSDK Streams Metadata");
-  }
 
   // Restart xCluster and CDCSDK parent tablet deletion bg task.
   StartXReplParentTabletDeletionTaskIfStopped();

@@ -1780,6 +1780,13 @@ class CatalogManager : public CatalogManagerIf, public SnapshotCoordinatorContex
 
   Status CleanUpDeletedXReplStreams(const LeaderEpoch& epoch);
 
+  Status CleanUpDeletedCDCSDKStreams(const LeaderEpoch& epoch);
+
+  Status CleanUpDeletedXClusterStreams(const LeaderEpoch& epoch);
+
+  Status CleanUpDeletedXReplStreamsForStreams(
+      const LeaderEpoch& epoch, std::vector<CDCStreamInfoPtr> streams);
+
   Status GetValidTabletsAndDroppedTablesForStream(
       const CDCStreamInfoPtr stream, std::set<TabletId>* tablets_with_streams,
       std::set<TableId>* dropped_tables);
@@ -2662,7 +2669,9 @@ class CatalogManager : public CatalogManagerIf, public SnapshotCoordinatorContex
   // Background thread, used to execute the catalog manager tasks
   // like the assignment and cleaner.
   friend class CatalogManagerBgTasks;
+  friend class CatalogManagerCdcBgTasks;
   std::unique_ptr<CatalogManagerBgTasks> background_tasks_;
+  std::unique_ptr<CatalogManagerCdcBgTasks> cdc_background_tasks_;
 
   // Background threadpool, newer features use this (instead of the Background thread)
   // to execute time-lenient catalog manager tasks.

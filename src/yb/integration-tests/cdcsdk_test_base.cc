@@ -120,6 +120,7 @@ Status CDCSDKTestBase::SetUpWithParams(
   // Set max_replication_slots to a large value so that we don't run out of them during tests and
   // don't have to do cleanups after every test case.
   ANNOTATE_UNPROTECTED_WRITE(FLAGS_max_replication_slots) = 500;
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_cdc_cleanup_bg_task_wait_ms) = 100;
 
   MiniClusterOptions opts;
   opts.num_masters = num_masters;
